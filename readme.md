@@ -30,7 +30,7 @@ For this example, I'm gonna utilise .NET to illustrate how instrumentation works
 3. Metrics - Metrics are timings of specific events that can be used to capture statistical data and observability. Eg how long a request takes or CPU info at a point in time.
 
 ## Integrating instrumentation
-Most of the setup in an application is pretty streamlined and gets integrated in the startup of the application
+Most of the setup in an application is pretty streamlined and gets integrated in the startup of the application. Separate endpoints in the opentelemetry collector handle logs, trace and metrics.
 
 ### Traces
 
@@ -71,7 +71,9 @@ Following this, introduce a trace around an operation. In the case of retrieving
 
 These end up building into existing traces with the capturing of additional data. 
 
-In terms of accessing traces, the optimal way is to embed the trace id within your logs. Then you can see the associated traffic with the logs. Tooling such as grafana tempo or Zipkin can produce a flame graph with a pretty nice breakdown of the request.
+In terms of accessing traces, the optimal way is to embed the trace id within your logs. Then you can see the associated traffic with the logs. Tooling such as grafana tempo or Zipkin can produce a flame graph with a pretty nice breakdown of the request. I've included an example below of a trace that was entirely produced by autoinstrumentation. It's capable of picking up all outgoing and incoming calls. This goes as far as producing urls and query data.
+
+![](img/sample-trace.png)
 
 
 ### Metrics
@@ -140,22 +142,19 @@ The [OpenTelemetry Collector](https://github.com/open-telemetry/opentelemetry-co
         prometheusremotewrite:
             endpoint: https://364320:api_key@prometheus-prod-10-prod-us-central-0.grafana.net/api/prom/push
             external_labels:
-            env: dev
-            region: us-west-2    
-            app: sample-app
-    extensions:
-        health_check:
+                env: dev
+                region: us-west-2    
+                app: sample-app
     service:
-    extensions: [health_check]
-    pipelines:
-        traces:
-            receivers: [otlp]
-            processors: [batch, resourcedetection]
-            exporters: [otlp]
-        metrics:
-            receivers: [otlp,prometheus]
-            processors: [batch,resourcedetection]
-            exporters: [prometheusremotewrite]
+        pipelines:
+            traces:
+                receivers: [otlp]
+                processors: [batch, resourcedetection]
+                exporters: [otlp]
+            metrics:
+                receivers: [prometheus]
+                processors: [batch,resourcedetection]
+                exporters: [prometheusremotewrite]
 
 Now I'll break down this config to understand each piece of it.
 
@@ -189,3 +188,48 @@ My utilisation of processors is pretty basic. Processors operate on the data its
             detectors: [ecs,system,env]
 
 [Resource detection](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/processor/resourcedetectionprocessor/README.md) gathers data around the kind of system it's operating in. Eg in this case it will gather standard machine info but also Amazon ECS specific and any associated environment variables.
+
+
+#### Exporters
+Exporters effectively configure what locations the data will go to. Metrics and traces for example can go to multiple different locations and we can embed authentication info etc into it. In addition in the case of metrics, I have included custom labeling for sending metrics to prometheus so at times, you do need to add a little bit of configuation.
+
+            external_labels:
+                env: dev
+                region: us-west-2    
+                app: sample-app
+
+#### Service
+At this layer, we configure what pieces of tooling that we've configured that we actually want to use.
+
+    service:
+        pipelines:
+            traces:
+                receivers: [otlp]
+                processors: [batch, resourcedetection]
+                exporters: [otlp]
+            metrics:
+                receivers: [prometheus]
+                processors: [batch,resourcedetection]
+                exporters: [prometheusremotewrite]
+The pipelines can be thought of like a deployment pipeline. We have multiple pieces that can be utilised but if they're not configured in our pipeline, they won't be used. 
+
+Traces, metrics and logs are each configured separately. In this case we just have traces and metrics configured. 
+
+The otlp receiver is utilised for traces, this will batch its data and embed additional resource information into the traces. They will then be exported otlp protocol into grafana's tempo service.
+
+Meanwhile metrics utilises the data gathered by the prometheus receiver and utilises the same processors. These are then exported by the prometheus remote write we have configured.
+
+
+### Conclusion
+OpenTelemetry offers a solution that allows for far greater control over our data. This piece has only touched upon the advantages of it. It's got widespread adoption from the opensource community and the major telemetry services. 
+
+There are still points that are not fully up to scratch as it is still in the beta phase however I am very much so of the opinion that it's production ready. A big advantage of the tooling is it does provide support for SaaS tooling such as Grafana, Datadog and Splunk. Another huge benefit is that this forces developers to think of more than simply logs. Eg traces can offer far greater utility than logs much of the time, cause they're constantly capturing request details including if they're failing and why.
+
+The overall support for different language is very strong although much of the libraries are still in beta. For any companies who are already using OpenTraces or OpenCensus, this should be a particularly straight forward transition. Aws also offer custom collectors if needed although I have found that the OpenTelemetry one is sufficient.
+
+
+## Resources
+* [OpenTelemetry Specifications](https://opentelemetry.io/docs/reference/specification/)
+* [Registry of tooling for major languages](https://opentelemetry.io/registry/)
+* [OpenTelemetry Docs](https://opentelemetry.io/docs/)
+* [Sample Datadog OpenTelemetry Project](https://github.com/mrblonde91/otlp-datadog)
